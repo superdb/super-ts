@@ -1,0 +1,16 @@
+none
+[1,none]
+[1,none]::[option(int64)]
+set[1,none]::set[option(int64)]
+map{1:none,2:"a"}::map{int64:option(string)}
+{a:1}::{a:int64,b?:string}
+{b:2,a:1}::{a:int64,b:int64}
+{a:none}::{a:option(int64)}
+{a?:none}::{a?:int64}
+[{a:1},{a:2,b?:"x"}]::[{a:int64,b?:string}]
+some([1,none])::option([option(int64)])
+none::int64
+none::option(int64)
+none::(int64|string)
+[]
+missing

@@ -1,0 +1,6 @@
+[1::(int64|string),"b"::(int64|string),2::(int64|string)]
+[8::(int64|string),3::(int64|string)]
+["hello"::(int64|string),"goodbye"::(int64|string)]
+{version:[1::(int64|string),"b"::(int64|string),2::(int64|string)]}
+{version:[8::(int64|string),3::(int64|string)]}
+{version:["hello"::(int64|string),"goodbye"::(int64|string)]}

@@ -1,0 +1,6 @@
+type foo={x:int64}
+{x:1}::foo
+{x:2}::foo
+type foo2={x:string}
+{x:"hello"}::foo2
+{x:"world"}::foo2

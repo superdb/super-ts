@@ -1,0 +1,4 @@
+<int64>
+{typ:<int64>}
+type "@foo"=int64
+<{def:"@foo",ref:"@foo"}>

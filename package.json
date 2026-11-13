@@ -1,0 +1,33 @@
+{
+  "name": "@superdb/super-ts",
+  "version": "0.1.0",
+  "description": "TypeScript library for talking to SuperDB: super-structured types and values, a BSUP decoder, and clients for the SuperDB service and superdb wasm",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test 'test/**/*.test.ts'",
+    "fixtures": "sh scripts/gen-fixtures.sh",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

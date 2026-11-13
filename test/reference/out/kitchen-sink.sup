@@ -1,0 +1,21 @@
+{u8:1::uint8,u16:2::uint16,u32:3::uint32,u64:18446744073709551615::uint64,i8:-1::int8,i16:-2::int16,i32:-3::int32,i64:-9223372036854775808}
+{f16:1.5::float16,f32:0.1::float32,f64:3.141592653589793,whole:2.,tiny:1e-10,big:1.5e+300}
+{b:true,s:"hello \"world\"\n",bytes:0x0102ff,empty:"",uni:"héllo ☃"}
+{ts:2024-01-02T03:04:05.123456789Z,d:1h2m3.5s,neg:-1ms,zero:0s}
+{ip4:10.0.0.1,ip6:fe80::1,ip6b:2001:db8::2,net:10.0.0.0/8,net6:2001:db8::/32}
+{id:00000000-0000-0000-0000-000000000001}
+{t:<int64>,r:<{a:int64,b:[string]}>,u:<int64|string>}
+{n:null,arr:[1,2,3],empty:[]::[int64],nested:[[1],[2,3]],recs:[{a:1},{a:2}]}
+{set:set["a","b"],map:map{"x":1,"y":2},emptymap:map{}::map{string:int64}}
+{e:"tails"::enum(heads,tails),err:error("boom"),errrec:error({code:1,msg:"bad"})}
+{u:1::(int64|string),v:"x"::(int64|string),mixed:[1,"b"]}
+{o?:1,p?:none::int64}
+type port=uint16
+{name:"web",port:80::port}
+{name:"ssl",port:443::port}
+type socket={addr:ip,port:port}
+{src:{addr:10.0.0.1,port:1234}::socket,dst:{addr:10.0.0.2,port:80}::socket}
+1
+"just a string"
+[1,2]
+{}

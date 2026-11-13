@@ -1,0 +1,6 @@
+type List={val:int64,next?:List}
+{val:1,next?:{val:2,next?:{val:3}}}::List
+type Arr=[option(int64)]
+[some(1),none]::Arr
+type O=option(int64)
+none::O

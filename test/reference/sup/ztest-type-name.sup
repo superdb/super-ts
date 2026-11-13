@@ -1,0 +1,10 @@
+type "github.com/acme/foo.Bar"={s:string}
+{s:"hello, world"}::"github.com/acme/foo.Bar"
+{s:"goodnight, gracie"}::"github.com/acme/foo.Bar"
+type "foo.bar"={x:int64}
+{x:1}::"foo.bar"
+type "@foo"={x:int64}
+{x:2}::"@foo"
+type "0"={x:uint8}
+{x:3::uint8}::"0"
+{x:4}::"0"
