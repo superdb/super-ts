@@ -1,0 +1,91 @@
+name: Test
+
+# Runs the tests on each pull request and merge, nightly, and after each pull
+# request merged in super (sent by super's notify-downstream-merge.yaml).  Since
+# super-ts decodes and formats what super writes, the tests also run against
+# fixtures made fresh by super, so a change in super that super-ts doesn't
+# match yet fails here.
+
+on:
+  schedule:
+    - cron: '5 8 * * *'
+  workflow_dispatch:
+    inputs:
+      super_ref:
+        description: 'superdb/super branch, tag, or SHA to test against'
+        default: main
+        required: false
+  repository_dispatch:
+    types: [super-pr-merged]
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: super-ts
+
+    - name: Check out super
+      uses: actions/checkout@v4
+      with:
+        repository: superdb/super
+        # After a merge in super, test the commit that merged.
+        ref: ${{ inputs.super_ref || github.event.client_payload.merge_commit_sha || 'main' }}
+        path: super
+        # Tags are needed for the version super reports.
+        fetch-depth: 0
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: super/go.mod
+        cache-dependency-path: super/go.sum
+
+    # The oldest Node that super-ts supports (see engines in package.json).
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.18'
+
+    - name: Install
+      working-directory: super-ts
+      run: npm ci
+
+    - name: Type check
+      working-directory: super-ts
+      run: npm run check
+
+    - name: Test with the saved fixtures
+      working-directory: super-ts
+      run: npm test
+
+    - name: Build super
+      run: |
+        make -C super build
+        super/dist/super -version
+
+    - name: Make the reference fixtures with super
+      working-directory: super-ts
+      run: SUPER="$GITHUB_WORKSPACE/super/dist/super" npm run fixtures
+
+    - name: Test with super's fixtures
+      working-directory: super-ts
+      run: npm test
+
+    # Runs by hand, e.g., against an old super, are watched by whoever ran
+    # them.
+    - name: Inform Slack users of test failures
+      uses: tiloio/slack-webhook-action@v1.1.2
+      if: failure() && github.ref_name == 'main' && github.event_name != 'workflow_dispatch'
+      with:
+        slack_web_hook_url: ${{ secrets.SLACK_WEBHOOK_BRIMLABS_TEST }}
+        slack_json: |
+          {
+            "username": "super-ts",
+            "text": "super-ts tests failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
