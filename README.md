@@ -9,7 +9,9 @@ It covers:
   and table views,
 * a **BSUP decoder** for row frames, column frames (dict, const, LZ4, and the
   intcomp integer codecs), control frames, and super footers, which can stream
-  input in chunks of any size,
+  input in chunks of any size or give random access to the values of a big
+  result, decoding only the values that are asked for,
+* **defusing** of fusion values, matching the output of the `super` command,
 * a **SUP formatter** that matches the output of `super -f sup`, type decorators
   included,
 * **clients** for the SuperDB service (`super db serve`) and for superdb compiled
@@ -41,6 +43,50 @@ for await (const ev of decodeBSUPStream(response.body!)) {
 }
 ```
 
+## Random access to big results
+
+`BSUPResults` reads the frame headers and column-frame locators of BSUP bytes
+up front, which is fast, and then decodes values only when you call
+`get(i)`. Each segment of a column frame is decompressed and decoded the
+first time a value needs it and is then kept in a `SegmentCache`. The cache
+drops its least recently used segments once it passes its budget (256 MB by
+default). This lets a viewer show any part of a result with hundreds of
+thousands of values without decoding all of them.
+
+```ts
+import { BSUPResults, Defuser } from "@superdb/super-ts"
+
+const results = new BSUPResults(bytes, { context, cacheBytes: 128 << 20 })
+results.length        // number of values
+results.fusedTypes    // the frames' fused types (e.g., for table columns)
+results.warnings      // QueryWarning control messages
+const v = results.get(15000)
+```
+
+`LazyColumnFrame` and `LazyRowFrame` do the same for a single frame.
+`decodeColumnFrame` and `decodeBSUP` decode everything and are built on the
+lazy readers.
+
+## Defusing
+
+When super reads heterogeneous data, such as JSON whose values have many
+different shapes, it fuses the values into a single supertype. Each place
+where values differ becomes a fusion value: the value as the supertype, plus
+its original subtype. `super` defuses these on output by default. With
+`-fusion`, or from the engine's BSUP, you get them fused. Leaving them fused
+is far cheaper to encode and send.
+
+`Defuser.defuse(v)` turns a value containing fusion values back into the
+original value. For example, a field of type `fusion(string|missing)` whose
+subtype is `missing` drops out of its record. This is a port of super's
+downcast, and it's tested against super's own defused output. `hasFusion(t)`
+tells you whether a type can contain fusion values.
+
+```ts
+const d = new Defuser(results.context)
+d.defuse(results.get(i)).toString()   // the same SUP as `super -s`
+```
+
 ## Types
 
 `Type` is a union of classes, each tagged by `kind`:
@@ -59,7 +105,9 @@ for await (const ev of decodeBSUPStream(response.body!)) {
 | `fusion`    | `TypeFusion`    | `type` (the supertype)                      |
 | `decimal`   | `TypeDecimal`   | `precision`, `scale`                        |
 
-`String(type)` gives SUP type syntax, e.g. `{a:int64,b?:[string]}`. Helpers:
+`String(type)` gives SUP type syntax, e.g. `{a:int64,b?:[string]}`.
+`compareTypes` orders types the way super does, and `TypeContext.unionOf`
+makes a union with its members in super's canonical order. Helpers:
 `under(t)` removes names, `recordOf(t)` finds the record under names and
 options, and there are predicates such as `isInteger`, `isFloat`, `isNumber`,
 and `isContainer`. Primitive singletons are exported as `TypeInt64`,
@@ -202,6 +250,9 @@ The tests check the decoder against three kinds of fixtures:
   produced from them. The tests decode the BSUP and require that the
   formatted text match super's byte for byte. To regenerate the output with
   your `super` build, run `npm run fixtures` (or `SUPER=/path/to/super npm run fixtures`).
+* `test/reference/defuse/`: JSON inputs, with the fused BSUP
+  (`super -fusion`) and the defused SUP (`super`) that super produced from
+  them. The tests require that defusing the BSUP give super's SUP exactly.
 * Hand-built row and column frames (`test/helpers/encode.ts`) for cases that
   are easier to construct directly.
 
@@ -209,9 +260,9 @@ The tests check the decoder against three kinds of fixtures:
 
 * The decoder reads BSUP version 0.31 only, and it rejects other 0.x versions
   just as super does.
-* Column frames are decoded in full; projections aren't decoded lazily yet.
-  64-bit integer segments are decoded with BigInt, which takes roughly
-  100–150 ms per 100k rows.
+* A value is decoded in full when it's asked for. Projections of a value
+  (just some of its fields) aren't supported yet. 64-bit integer segments
+  are decoded with BigInt, which takes roughly 100–150 ms per 100k values.
 * Zone maps in super footers are skipped. Only the fused type is decoded.
 * Decimal values and the reserved primitive types decode as
   `UnimplementedValue`.

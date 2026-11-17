@@ -12,12 +12,18 @@ export {
   decodeBSUPStream,
   decodeRowFrame,
   decodeSuperFooter,
+  readFrameHeader,
+  BSUPResults,
+  LazyRowFrame,
   toAsyncIterable,
   BSUP_VERSION,
   type BSUPEvent,
   type DecoderOptions,
+  type FrameHeader,
+  type ResultsOptions,
 } from "./bsup/decoder.ts"
-export { decodeColumnFrame } from "./bsup/columns.ts"
+export { decodeColumnFrame, LazyColumnFrame, SegmentCache, type ColumnFrameOptions } from "./bsup/columns.ts"
+export { Defuser, hasFusion } from "./defuse.ts"
 export { decodeBody } from "./bsup/body.ts"
 export { decodeTypeValue, TypeDefs } from "./bsup/typedefs.ts"
 export { BSUPFormatError } from "./bsup/reader.ts"
