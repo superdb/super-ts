@@ -202,8 +202,15 @@ The tests check the decoder against three kinds of fixtures:
   produced from them. The tests decode the BSUP and require that the
   formatted text match super's byte for byte. To regenerate the output with
   your `super` build, run `npm run fixtures` (or `SUPER=/path/to/super npm run fixtures`).
+  It exits nonzero if `super` can't make all of them.
 * Hand-built row and column frames (`test/helpers/encode.ts`) for cases that
   are easier to construct directly.
+
+CI runs the tests on each pull request and merge, nightly, and after each
+pull request merged in super, first with the saved fixtures and then with
+fixtures made by `super` from its `main` branch (or, when run by hand, from a
+branch, tag, or commit you choose). So a change in super that super-ts
+doesn't match yet makes CI fail, even on a pull request that didn't cause it.
 
 ## Notes and known gaps
 
