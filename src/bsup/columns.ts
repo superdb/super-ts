@@ -24,6 +24,7 @@ import {
   FusionValue,
   IntValue,
   MapValue,
+  NullValue,
   OptionValue,
   RecordValue,
   SetValue,
@@ -681,8 +682,12 @@ class LocatorParser {
     const n = this.count()
     const len = this.loc.uvarint()
     const body = len === 0 ? new Uint8Array(0) : this.loc.bytes(len - 1)
-    const value = decodeBody(this.ctx, this.typeOf(id, outer), body)
-    return new ConstVec(n, value)
+    const typ = this.typeOf(id, outer)
+    // super writes a const of no values with no value for an empty vector
+    // (e.g., a named type that head, tail, or a filter left with no values),
+    // so there's nothing to decode. A const of no values never returns its value.
+    if (n === 0) return new ConstVec(0, new NullValue(typ))
+    return new ConstVec(n, decodeBody(this.ctx, typ, body))
   }
 
   private dictVector(id: number, outer?: Type): Vec {
