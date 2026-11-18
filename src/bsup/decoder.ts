@@ -7,7 +7,7 @@
 import { type Type, TypeContext } from "../types.ts"
 import type { Value } from "../values.ts"
 import { decodeBody } from "./body.ts"
-import { decodeColumnFrame } from "./columns.ts"
+import { LazyColumnFrame, SegmentCache, decodeColumnFrame } from "./columns.ts"
 import { BSUPFormatError, ByteReader, readSizeLE, readUint32LE } from "./reader.ts"
 import { TypeDefs, decodeTypeValue } from "./typedefs.ts"
 
@@ -34,6 +34,29 @@ export type BSUPEvent =
 export interface DecoderOptions {
   /** The context in which to create types (default: a new context). */
   context?: TypeContext
+}
+
+/** The header of a frame or super footer. */
+export interface FrameHeader {
+  magic: string
+  /** The size of the frame, header included. */
+  size: number
+}
+
+/**
+ * Reads the header of the frame at off, checking its magic and version.  It
+ * returns undefined if fewer than the 14 bytes needed are there.
+ */
+export function readFrameHeader(b: Uint8Array, off: number): FrameHeader | undefined {
+  if (b.length - off < 14) return undefined
+  const magic = magicOf(b, off)
+  if (magic !== ROW_MAGIC && magic !== CONTROL_MAGIC && magic !== COLUMN_MAGIC && magic !== SUPER_MAGIC) {
+    throw new BSUPFormatError(`unknown frame magic ${JSON.stringify(magic)}`)
+  }
+  checkVersion(b, off)
+  const size = readSizeLE(b, off + 6)
+  if (size > MAX_FRAME_SIZE) throw new BSUPFormatError(`frame size ${size} too large`)
+  return { magic, size }
 }
 
 function magicOf(b: Uint8Array, off: number): string {
@@ -108,16 +131,11 @@ export class BSUPDecoder {
   // more input is needed and null for a frame that produces no event.
   private next(): BSUPEvent | null | undefined {
     const avail = this.end - this.start
-    if (avail < 14) return undefined
     const b = this.buf
     const off = this.start
-    const magic = magicOf(b, off)
-    if (magic !== ROW_MAGIC && magic !== CONTROL_MAGIC && magic !== COLUMN_MAGIC && magic !== SUPER_MAGIC) {
-      throw new BSUPFormatError(`unknown frame magic ${JSON.stringify(magic)}`)
-    }
-    checkVersion(b, off)
-    const size = readSizeLE(b, off + 6)
-    if (size > MAX_FRAME_SIZE) throw new BSUPFormatError(`frame size ${size} too large`)
+    const hdr = readFrameHeader(b.subarray(0, this.end), off)
+    if (!hdr) return undefined
+    const { magic, size } = hdr
     if (avail < size) return undefined
     // Copy the frame out of the shared buffer so values never alias it.
     const frame = b.slice(off, off + size)
@@ -156,6 +174,47 @@ export function decodeRowFrame(ctx: TypeContext, frame: Uint8Array): { values: V
   }
   const fusedType = values.length > 0 ? defs.lookup(fusedID) : undefined
   return { values, fusedType }
+}
+
+/**
+ * A row frame whose values are decoded as they're asked for.  Making one
+ * scans the frame once to find where each value starts.
+ */
+export class LazyRowFrame {
+  readonly length: number
+  readonly fusedType: Type | undefined
+  private ctx: TypeContext
+  private frame: Uint8Array
+  private defs: TypeDefs
+  private starts: Uint32Array
+  private typeIDs: Uint32Array
+
+  constructor(ctx: TypeContext, frame: Uint8Array) {
+    if (frame.length < ROW_HEADER_SIZE) throw new BSUPFormatError("short row frame")
+    this.ctx = ctx
+    this.frame = frame
+    const typedefsSize = readSizeLE(frame, 18)
+    if (ROW_HEADER_SIZE + typedefsSize > frame.length) throw new BSUPFormatError("typedefs section out of range")
+    this.defs = new TypeDefs(ctx, frame.subarray(ROW_HEADER_SIZE, ROW_HEADER_SIZE + typedefsSize))
+    const r = new ByteReader(frame, ROW_HEADER_SIZE + typedefsSize)
+    const starts: number[] = []
+    const ids: number[] = []
+    while (!r.done()) {
+      ids.push(r.uvarint())
+      starts.push(r.pos)
+      r.bytes(r.uvarint())
+    }
+    this.starts = Uint32Array.from(starts)
+    this.typeIDs = Uint32Array.from(ids)
+    this.length = starts.length
+    this.fusedType = this.length > 0 ? this.defs.lookup(readUint32LE(frame, 14)) : undefined
+  }
+
+  get(i: number): Value {
+    if (!(i >= 0 && i < this.length)) throw new RangeError(`index ${i} out of range [0,${this.length})`)
+    const r = new ByteReader(this.frame, this.starts[i])
+    return decodeBody(this.ctx, this.defs.lookup(this.typeIDs[i]), r.value())
+  }
 }
 
 /** Decodes a super footer and returns the fused type of its super frame. */
@@ -208,5 +267,115 @@ export async function* toAsyncIterable<T>(stream: AsyncIterable<T> | ReadableStr
     }
   } finally {
     reader.releaseLock()
+  }
+}
+
+export interface ResultsOptions {
+  /** The context in which to create types (default: a new context). */
+  context?: TypeContext
+  /** The most bytes of decoded segments to keep cached (default: 256 MB). */
+  cacheBytes?: number
+}
+
+function controlName(v: Value): string | undefined {
+  return v.type.kind === "named" ? v.type.name : undefined
+}
+
+function controlString(v: Value, field: string): string | undefined {
+  const u = v.unwrap()
+  if (u.kind !== "record") return undefined
+  const f = u.get(field)?.unwrap()
+  return f?.kind === "string" ? f.value : undefined
+}
+
+/**
+ * The values in BSUP bytes (e.g., the results of a query), for random
+ * access.  Making one reads the frames' headers and locators but decodes no
+ * values, and get(i) decodes just value i, so a viewer can show any part of
+ * a big result quickly and without decoding the rest.  It keeps a reference
+ * to the bytes.
+ *
+ * Control messages are read up front: the service's warnings and errors
+ * are in warnings and errors.  The values of all channels are included, in
+ * order.
+ */
+export class BSUPResults {
+  readonly context: TypeContext
+  /** The number of values. */
+  readonly length: number
+  /** Warnings (QueryWarning control messages). */
+  readonly warnings: string[] = []
+  /** Errors (QueryError control messages). */
+  readonly errors: string[] = []
+  /** All of the control messages. */
+  readonly controls: Value[] = []
+  /** The distinct fused types of the frames with values, in order. */
+  readonly fusedTypes: Type[] = []
+  /** The cache of decoded segments shared by the frames. */
+  readonly cache: SegmentCache
+  private frames: (LazyColumnFrame | LazyRowFrame)[] = []
+  private starts: number[] = []
+
+  constructor(bytes: Uint8Array, opts: ResultsOptions = {}) {
+    this.context = opts.context ?? new TypeContext()
+    this.cache = new SegmentCache(opts.cacheBytes)
+    let off = 0
+    let total = 0
+    while (off < bytes.length) {
+      const hdr = readFrameHeader(bytes, off)
+      if (!hdr || off + hdr.size > bytes.length) throw new BSUPFormatError("truncated input")
+      const frame = bytes.subarray(off, off + hdr.size)
+      off += hdr.size
+      let lazy: LazyColumnFrame | LazyRowFrame | undefined
+      switch (hdr.magic) {
+        case ROW_MAGIC:
+          lazy = new LazyRowFrame(this.context, frame)
+          break
+        case COLUMN_MAGIC:
+          lazy = new LazyColumnFrame(this.context, frame, { cache: this.cache })
+          break
+        case CONTROL_MAGIC:
+          for (const v of decodeRowFrame(this.context, frame).values) this.control(v)
+          break
+      }
+      if (lazy && lazy.length > 0) {
+        this.frames.push(lazy)
+        this.starts.push(total)
+        total += lazy.length
+        if (lazy.fusedType && !this.fusedTypes.includes(lazy.fusedType)) this.fusedTypes.push(lazy.fusedType)
+      }
+    }
+    this.length = total
+  }
+
+  private control(v: Value) {
+    this.controls.push(v)
+    switch (controlName(v)) {
+      case "QueryWarning":
+        this.warnings.push(controlString(v, "warning") ?? v.toString())
+        break
+      case "QueryError":
+        this.errors.push(controlString(v, "error") ?? v.toString())
+        break
+    }
+  }
+
+  /** Value i (as stored, i.e., not defused). */
+  get(i: number): Value {
+    if (!(i >= 0 && i < this.length)) throw new RangeError(`index ${i} out of range [0,${this.length})`)
+    // Find the last frame starting at or before i.
+    let lo = 0
+    let hi = this.starts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1
+      if (this.starts[mid] <= i) lo = mid
+      else hi = mid - 1
+    }
+    return this.frames[lo].get(i - this.starts[lo])
+  }
+
+  /** The values from index from up to (not including) to. */
+  *values(from = 0, to = this.length): Generator<Value> {
+    for (let i = Math.max(0, from); i < Math.min(to, this.length); i++) yield this.get(i)
   }
 }

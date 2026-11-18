@@ -400,6 +400,15 @@ export class TypeContext {
     return this.intern(`u${types.map((t) => t.serial).join(",")}`, () => new TypeUnion([...types]))
   }
 
+  /**
+   * The union of the distinct types in types, in SuperDB's canonical order
+   * (see compareTypes), or the type itself if there's only one.
+   */
+  unionOf(types: readonly Type[]): Type {
+    const distinct = [...new Set(types)].sort(compareTypes)
+    return distinct.length === 1 ? distinct[0] : this.union(distinct)
+  }
+
   enum(symbols: readonly string[]): TypeEnum {
     return this.intern(`e${JSON.stringify(symbols)}`, () => new TypeEnum([...symbols]))
   }
@@ -445,6 +454,88 @@ export class TypeContext {
     placeholder.type = type
     this.table.set(key, placeholder)
     return placeholder
+  }
+}
+
+// The order of kinds in compareTypes, as in the Go implementation.
+const kindOrder: Record<Exclude<TypeKind, "named">, number> = {
+  primitive: 0,
+  record: 1,
+  array: 2,
+  set: 3,
+  map: 4,
+  union: 5,
+  enum: 6,
+  error: 7,
+  fusion: 8,
+  option: 9,
+  decimal: 10,
+}
+
+function cmp<T extends number | string>(a: T, b: T): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+/**
+ * Orders types as SuperDB does, e.g., to put the members of a union in
+ * canonical order.  Types from the same context compare equal only if they
+ * are the same type.  This is a port of super.CompareTypes.
+ */
+export function compareTypes(a: Type, b: Type): number {
+  if (a === b) return 0
+  // Named types come first, ordered by name.
+  if (a.kind === "named") return b.kind === "named" ? cmp(a.name, b.name) : -1
+  if (b.kind === "named") return 1
+  const k = cmp(kindOrder[a.kind], kindOrder[b.kind])
+  if (k !== 0) return k
+  switch (a.kind) {
+    case "primitive":
+      return cmp(a.id, (b as TypePrimitive).id)
+    case "record": {
+      const r = b as TypeRecord
+      if (a.fields.length !== r.fields.length) return cmp(a.fields.length, r.fields.length)
+      for (let i = 0; i < a.fields.length; i++) {
+        const c = cmp(a.fields[i].name, r.fields[i].name)
+        if (c !== 0) return c
+      }
+      for (let i = 0; i < a.fields.length; i++) {
+        const c = compareTypes(a.fields[i].type, r.fields[i].type)
+        if (c !== 0) return c
+      }
+      return 0
+    }
+    case "array":
+    case "set":
+    case "error":
+    case "fusion":
+    case "option":
+      return compareTypes(a.type, (b as typeof a).type)
+    case "map": {
+      const m = b as TypeMap
+      return compareTypes(a.keyType, m.keyType) || compareTypes(a.valType, m.valType)
+    }
+    case "union": {
+      const u = b as TypeUnion
+      if (a.types.length !== u.types.length) return cmp(a.types.length, u.types.length)
+      for (let i = 0; i < a.types.length; i++) {
+        const c = compareTypes(a.types[i], u.types[i])
+        if (c !== 0) return c
+      }
+      return 0
+    }
+    case "enum": {
+      const e = b as TypeEnum
+      if (a.symbols.length !== e.symbols.length) return cmp(a.symbols.length, e.symbols.length)
+      for (let i = 0; i < a.symbols.length; i++) {
+        const c = cmp(a.symbols[i], e.symbols[i])
+        if (c !== 0) return c
+      }
+      return 0
+    }
+    case "decimal": {
+      const d = b as TypeDecimal
+      return cmp(a.precision, d.precision) || cmp(a.scale, d.scale)
+    }
   }
 }
 

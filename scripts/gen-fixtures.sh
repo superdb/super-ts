@@ -33,4 +33,17 @@ for src in "$in"/*.sup; do
   "$SUPER" $args -f bsup -o "$out/$name.col.bsup" "$src"
   "$SUPER" $args -f bsup -rows -o "$out/$name.row.bsup" "$src"
 done
-echo "wrote fixtures to $out"
+
+# Defusing: for each test/reference/defuse/NAME.json, the fused BSUP that
+# super writes with -fusion (NAME.fused.bsup) and the defused SUP that it
+# writes by default (NAME.sup).
+din=test/reference/defuse
+dout=test/reference/defuse-out
+rm -rf "$dout"
+mkdir -p "$dout"
+for src in "$din"/*.json; do
+  name=$(basename "$src" .json)
+  "$SUPER" -fusion -f bsup -o "$dout/$name.fused.bsup" "$src"
+  "$SUPER" -f sup -pretty 0 -o "$dout/$name.sup" "$src"
+done
+echo "wrote fixtures to $out and $dout"

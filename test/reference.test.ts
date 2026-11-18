@@ -5,7 +5,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { decodeBSUP } from "../src/bsup/decoder.ts"
+import { BSUPResults, decodeBSUP } from "../src/bsup/decoder.ts"
 
 const dir = new URL("./reference/out/", import.meta.url)
 const names = existsSync(dir)
@@ -30,10 +30,15 @@ for (const name of names) {
     if (!existsSync(file)) continue
     test(`reference ${name} (${layout})`, () => {
       const vals = decodeBSUP(new Uint8Array(readFileSync(file)))
+      const want = expected(name)
       assert.deepEqual(
         vals.map((v) => v.toString()),
-        expected(name),
+        want,
       )
+      // Random access, backwards and with a tiny cache, gives the same values.
+      const res = new BSUPResults(new Uint8Array(readFileSync(file)), { cacheBytes: 1024 })
+      assert.equal(res.length, want.length)
+      for (let i = res.length - 1; i >= 0; i--) assert.equal(res.get(i).toString(), want[i])
     })
   }
 }
