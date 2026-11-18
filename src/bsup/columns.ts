@@ -7,8 +7,9 @@
 // from element i (or the elements it refers to) of each vector, and each
 // segment is decompressed and decoded the first time it's needed.  Decoded
 // segments are kept in a SegmentCache, which drops the least recently used
-// ones when it gets too big, so a frame with a lot of data can be browsed
-// without decoding all of it or keeping it all decoded.
+// ones when it gets too big (except those that the last two frames read have
+// used), so a result with a lot of data can be browsed without decoding all
+// of it or keeping it all decoded.
 //
 // decodeColumnFrame decodes all of a frame's values.
 
@@ -56,33 +57,52 @@ const MAX_DEPTH = 10_000
 /**
  * A cache of decoded segments (and other data derived from a frame) that
  * drops the least recently used entries when their total size exceeds its
- * budget.  Share one cache among the frames of a result so the budget
- * applies to all of them.
+ * budget, except for entries that the last two frames read have used.  So
+ * the cache can hold up to those two frames' decoded segments, even if
+ * that's more than the budget, but a frame bigger than the budget isn't
+ * decoded again for every value.  Share one cache among the frames of a
+ * result so the budget applies to all of them.
  */
 export class SegmentCache {
-  /** The most bytes to keep (approximately). */
+  /** The most bytes to keep (approximately), except for what the last two frames read have used. */
   readonly budget: number
-  private entries = new Map<object, { value: unknown; size: number }>()
+  private entries = new Map<object, { value: unknown; size: number; visit: number }>()
   private total = 0
+  private current: object | undefined
+  // visit counts the times reading switched to another frame.
+  private visit = 0
 
   constructor(budget = 256 * 1024 * 1024) {
     this.budget = budget
+  }
+
+  /** Notes that frame is being read (LazyColumnFrame calls this for each value). */
+  reading(frame: object) {
+    if (frame !== this.current) {
+      this.current = frame
+      this.visit++
+    }
   }
 
   /** The cached value for key, made with make (which also returns its size in bytes) if it isn't cached. */
   get<T>(key: object, make: () => [T, number]): T {
     const e = this.entries.get(key)
     if (e) {
-      // Move it to the end, the most recently used.
-      this.entries.delete(key)
-      this.entries.set(key, e)
+      if (e.visit !== this.visit) {
+        // Move it to the end, the most recently used.
+        this.entries.delete(key)
+        e.visit = this.visit
+        this.entries.set(key, e)
+      }
       return e.value as T
     }
     const [value, size] = make()
-    this.entries.set(key, { value, size })
+    this.entries.set(key, { value, size, visit: this.visit })
     this.total += size
+    // The entries are in order of the visit that last used them, so the
+    // ones used in the last two visits come last.
     for (const [k, old] of this.entries) {
-      if (this.total <= this.budget || k === key) break
+      if (this.total <= this.budget || old.visit >= this.visit - 1) break
       this.entries.delete(k)
       this.total -= old.size
     }
@@ -533,9 +553,11 @@ export class LazyColumnFrame {
   /** The fused type of the frame's values, if the frame has values. */
   readonly fusedType: Type | undefined
   private root: Vec
+  private cache: SegmentCache
 
   constructor(ctx: TypeContext, frame: Uint8Array, opts: ColumnFrameOptions = {}) {
-    const parser = new LocatorParser(ctx, frame, opts.cache ?? new SegmentCache())
+    this.cache = opts.cache ?? new SegmentCache()
+    const parser = new LocatorParser(ctx, frame, this.cache)
     this.root = parser.parse()
     this.length = this.root.length
     this.fusedType = this.length > 0 ? parser.fusedType() : undefined
@@ -543,6 +565,7 @@ export class LazyColumnFrame {
 
   /** Value i of the frame. */
   get(i: number): Value {
+    this.cache.reading(this)
     return this.root.get(i)
   }
 }
