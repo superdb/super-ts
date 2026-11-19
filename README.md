@@ -50,7 +50,10 @@ up front, which is fast, and then decodes values only when you call
 `get(i)`. Each segment of a column frame is decompressed and decoded the
 first time a value needs it and is then kept in a `SegmentCache`. The cache
 drops its least recently used segments once it passes its budget (256 MB by
-default). This lets a viewer show any part of a result with hundreds of
+default), except for what the last two frames read have used. So it can
+hold up to two frames' decoded segments, even past the budget, but a frame
+bigger than the budget, or a screen that spans two frames, is decoded only
+once. This lets a viewer show any part of a result with hundreds of
 thousands of values without decoding all of them.
 
 ```ts

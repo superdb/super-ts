@@ -35,10 +35,14 @@ for (const name of names) {
         vals.map((v) => v.toString()),
         want,
       )
-      // Random access, backwards and with a tiny cache, gives the same values.
-      const res = new BSUPResults(new Uint8Array(readFileSync(file)), { cacheBytes: 1024 })
+      // Random access, backwards and with each value decoded from scratch,
+      // gives the same values.
+      const res = new BSUPResults(new Uint8Array(readFileSync(file)))
       assert.equal(res.length, want.length)
-      for (let i = res.length - 1; i >= 0; i--) assert.equal(res.get(i).toString(), want[i])
+      for (let i = res.length - 1; i >= 0; i--) {
+        res.cache.clear()
+        assert.equal(res.get(i).toString(), want[i])
+      }
     })
   }
 }

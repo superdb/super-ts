@@ -12,7 +12,7 @@ import {
   TypeType,
   TypeUint16,
 } from "../src/types.ts"
-import { decodeColumnFrame } from "../src/bsup/columns.ts"
+import { LazyColumnFrame, SegmentCache, decodeColumnFrame } from "../src/bsup/columns.ts"
 import { decodeBSUP } from "../src/bsup/decoder.ts"
 import { ColumnFrameBuilder, concat, intcomp64, intcompUint32, superFooter } from "./helpers/encode.ts"
 
@@ -277,4 +277,55 @@ test("malformed locators", () => {
   const b2 = new ColumnFrameBuilder()
   b2.loc.byte(1).uvarint(0).uvarint(0)
   assert.throws(() => decodeColumnFrame(ctx, b2.frame([999], t)), /type ID 999/)
+})
+
+// A SegmentCache that counts the entries it makes.
+class CountingCache extends SegmentCache {
+  made = 0
+  override get<T>(key: object, make: () => [T, number]): T {
+    return super.get(key, () => {
+      this.made++
+      return make()
+    })
+  }
+}
+
+// A frame of n values {a:k,b:k}.  Each int64 field is one cache entry of n*8 bytes.
+function intsFrame(n: number): Uint8Array {
+  const t = ctx.record([
+    { name: "a", type: TypeInt64 },
+    { name: "b", type: TypeInt64 },
+  ])
+  const b = new ColumnFrameBuilder()
+  const id = b.vdefs.lookup(t)
+  const vals = Array.from({ length: n }, (_, k) => k)
+  b.loc.byte(0)
+  ints(b, vals)
+  ints(b, vals)
+  return b.frame([id], t)
+}
+
+test("a frame bigger than the cache budget is decoded once", () => {
+  // Each value needs both fields (1,600 bytes), more than the budget.
+  const cache = new CountingCache(1000)
+  const f = new LazyColumnFrame(ctx, intsFrame(100), { cache })
+  for (let i = 0; i < f.length; i++) assert.equal(f.get(i).toString(), `{a:${i},b:${i}}`)
+  assert.equal(cache.made, 2)
+})
+
+test("the cache keeps what the last two frames read have used", () => {
+  const cache = new CountingCache(1000)
+  const [f1, f2, f3] = [0, 1, 2].map(() => new LazyColumnFrame(ctx, intsFrame(100), { cache }))
+  // A screen that spans two frames, drawn five times.
+  for (let r = 0; r < 5; r++) {
+    assert.equal(f1.get(99).toString(), "{a:99,b:99}")
+    assert.equal(f2.get(0).toString(), "{a:0,b:0}")
+  }
+  assert.equal(cache.made, 4)
+  // Reading a third frame drops the first one's entries.
+  f3.get(0)
+  assert.equal(cache.made, 6)
+  assert.equal(cache.size, 3200)
+  f1.get(0)
+  assert.equal(cache.made, 8)
 })

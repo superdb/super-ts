@@ -273,7 +273,7 @@ export async function* toAsyncIterable<T>(stream: AsyncIterable<T> | ReadableStr
 export interface ResultsOptions {
   /** The context in which to create types (default: a new context). */
   context?: TypeContext
-  /** The most bytes of decoded segments to keep cached (default: 256 MB). */
+  /** The most bytes of decoded segments to keep cached (default: 256 MB), except for what the last two frames read have used. */
   cacheBytes?: number
 }
 
