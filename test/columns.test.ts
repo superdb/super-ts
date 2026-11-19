@@ -87,6 +87,20 @@ test("dict and const vectors", () => {
   ])
 })
 
+test("empty const vector with no value", () => {
+  // What super writes for {a:1}::foo {b:"x"} | tail with -fusion: foo has no values left.
+  const foo = ctx.named("foo", ctx.record([{ name: "a", type: TypeInt64 }]))
+  const rec = ctx.record([{ name: "b", type: TypeString }])
+  const b = new ColumnFrameBuilder()
+  // foo: a const of 0 values with a null body
+  b.loc.byte(1).uvarint(0).uvarint(0)
+  // {b:string}
+  b.loc.byte(0)
+  strings(b, ["x"])
+  const ids = [b.vdefs.lookup(foo), b.vdefs.lookup(rec)]
+  assert.deepEqual(decode(b.frame(ids, ctx.union([foo, rec]), intcompUint32([1]))), ['{b:"x"}'])
+})
+
 test("options", () => {
   const opt = ctx.option(TypeInt64)
   const t = ctx.record([
@@ -259,4 +273,8 @@ test("malformed locators", () => {
   b.loc.byte(0)
   b.loc.byte(7) // bad kind
   assert.throws(() => decodeColumnFrame(ctx, b.frame([id], t)), /kind/)
+  // A const of no values still needs a valid type.
+  const b2 = new ColumnFrameBuilder()
+  b2.loc.byte(1).uvarint(0).uvarint(0)
+  assert.throws(() => decodeColumnFrame(ctx, b2.frame([999], t)), /type ID 999/)
 })
