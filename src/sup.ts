@@ -6,6 +6,7 @@
 
 import {
   type Type,
+  type TypeNamed,
   type TypeRecord,
   type TypeUnion,
   ID,
@@ -24,6 +25,139 @@ export function formatValue(val: Value): string {
   const f = new Formatter()
   f.formatValueAndDecorate(val.type, val)
   return f.out
+}
+
+/**
+ * Formats values as SUP text with one value per line.  Each named type is
+ * declared (`type name=...`) ahead of the first value that uses it, so the
+ * text can be read back, e.g., by the super command, with every type intact.
+ */
+export function formatSUP(values: Iterable<Value>): string {
+  const declared = new Map<string, Type>()
+  let out = ""
+  const declare = (typ: Type) => {
+    for (const t of namedTypesOf(typ)) {
+      if (declared.get(t.name) === t) continue
+      declared.set(t.name, t)
+      out += `type ${quotedName(t.name)}=${formatType(t.type)}\n`
+    }
+  }
+  for (const val of values) {
+    declare(val.type)
+    // Type values (and the subtypes of fusion values) can refer to named
+    // types that the value's own type doesn't.
+    if (holdsTypes(val.type)) forEachTypeIn(val, declare)
+    out += formatValue(val) + "\n"
+  }
+  return out
+}
+
+const holdsTypesCache = new WeakMap<Type, boolean>()
+
+// True if a value of typ can hold a type value or a fusion value.
+function holdsTypes(typ: Type): boolean {
+  let holds = holdsTypesCache.get(typ)
+  if (holds !== undefined) return holds
+  // Mark typ first in case it's reached again through a recursive type.
+  holdsTypesCache.set(typ, false)
+  switch (typ.kind) {
+    case "primitive":
+      holds = typ.id === ID.type
+      break
+    case "fusion":
+      holds = true
+      break
+    case "record":
+      holds = typ.fields.some((f) => holdsTypes(f.type))
+      break
+    case "named":
+    case "array":
+    case "set":
+    case "error":
+    case "option":
+      holds = holdsTypes(typ.type)
+      break
+    case "map":
+      holds = holdsTypes(typ.keyType) || holdsTypes(typ.valType)
+      break
+    case "union":
+      holds = typ.types.some(holdsTypes)
+      break
+    default:
+      holds = false
+  }
+  holdsTypesCache.set(typ, holds)
+  return holds
+}
+
+function forEachTypeIn(val: Value, fn: (typ: Type) => void) {
+  switch (val.kind) {
+    case "type":
+      fn(val.value)
+      break
+    case "fusion":
+      fn(val.subtype)
+      forEachTypeIn(val.value, fn)
+      break
+    case "record":
+      for (const v of val.values) forEachTypeIn(v, fn)
+      break
+    case "array":
+    case "set":
+      for (const v of val.items) forEachTypeIn(v, fn)
+      break
+    case "map":
+      for (const [k, v] of val.entries) {
+        forEachTypeIn(k, fn)
+        forEachTypeIn(v, fn)
+      }
+      break
+    case "union":
+    case "error":
+      forEachTypeIn(val.value, fn)
+      break
+    case "option":
+      if (val.value) forEachTypeIn(val.value, fn)
+      break
+  }
+}
+
+/**
+ * The named types that typ refers to (typ included), each one after the
+ * named types that it refers to, except where types are recursive.
+ */
+export function namedTypesOf(typ: Type): TypeNamed[] {
+  const out: TypeNamed[] = []
+  const seen = new Set<Type>()
+  const walk = (t: Type) => {
+    if (seen.has(t)) return
+    seen.add(t)
+    switch (t.kind) {
+      case "named":
+        walk(t.type)
+        out.push(t)
+        break
+      case "record":
+        for (const f of t.fields) walk(f.type)
+        break
+      case "array":
+      case "set":
+      case "error":
+      case "fusion":
+      case "option":
+        walk(t.type)
+        break
+      case "map":
+        walk(t.keyType)
+        walk(t.valType)
+        break
+      case "union":
+        t.types.forEach(walk)
+        break
+    }
+  }
+  walk(typ)
+  return out
 }
 
 /** Formats a primitive value without any decorator, e.g., for a table cell. */

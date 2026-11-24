@@ -2,7 +2,7 @@
 
 export * from "./types.ts"
 export * from "./values.ts"
-export { formatValue, formatPrimitive, formatTypeValue, implied, selfDescribing } from "./sup.ts"
+export { formatValue, formatSUP, formatPrimitive, formatTypeValue, namedTypesOf, implied, selfDescribing } from "./sup.ts"
 export { formatDuration, formatTimestamp, formatFloat64, formatFloat32, formatIP, formatNet, formatUUID } from "./format.ts"
 export { columnsOf, leafColumnsOf, type Column } from "./shape.ts"
 
@@ -22,6 +22,17 @@ export {
   type FrameHeader,
   type ResultsOptions,
 } from "./bsup/decoder.ts"
+export {
+  ByteWriter,
+  TypeDefsEncoder,
+  encodeBSUP,
+  encodeBody,
+  encodeRowFrame,
+  encodeSuperFooter,
+  encodeTypeValue,
+  isFusedType,
+  type EncodeOptions,
+} from "./bsup/encoder.ts"
 export { decodeColumnFrame, LazyColumnFrame, SegmentCache, type ColumnFrameOptions } from "./bsup/columns.ts"
 export { Defuser, hasFusion } from "./defuse.ts"
 export { decodeBody } from "./bsup/body.ts"
