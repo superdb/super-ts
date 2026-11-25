@@ -12,7 +12,7 @@ import { BSUPFormatError, ByteReader, readSizeLE, readUint32LE } from "./reader.
 import { TypeDefs, decodeTypeValue } from "./typedefs.ts"
 
 /** The BSUP version this decoder implements. */
-export const BSUP_VERSION = { major: 0, minor: 31 } as const
+export const BSUP_VERSION: { readonly major: number; readonly minor: number } = { major: 2, minor: 0 }
 
 export const ROW_MAGIC = "SUPR"
 export const CONTROL_MAGIC = "SUPX"
@@ -67,7 +67,7 @@ function checkVersion(b: Uint8Array, off: number) {
   const v = b[off + 4] | (b[off + 5] << 8)
   const major = v >>> 10
   const minor = v & 0x3ff
-  if (major !== BSUP_VERSION.major || (major === 0 && minor !== BSUP_VERSION.minor)) {
+  if (major !== BSUP_VERSION.major || (BSUP_VERSION.major === 0 && minor !== BSUP_VERSION.minor)) {
     throw new BSUPFormatError(
       `version mismatch: expected ${BSUP_VERSION.major}.${BSUP_VERSION.minor}, found ${major}.${minor}`,
     )
