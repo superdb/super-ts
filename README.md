@@ -405,15 +405,15 @@ when `super` (or `$SUPER`) isn't there to run.
 
 ## Notes and known gaps
 
-* The decoder reads BSUP version 0.31 only, and it rejects other 0.x versions
-  just as super does.
+* The decoder reads BSUP version 2.x and rejects other major versions, just
+  as super does.
 * A value is decoded in full when it's asked for. Projections of a value
   (just some of its fields) aren't supported yet. 64-bit integer segments
   are decoded with BigInt, which takes roughly 100–150 ms per 100k values.
 * Zone maps in super footers are skipped. Only the fused type is decoded.
 * Decimal values and the reserved primitive types decode as
   `UnimplementedValue`.
-* In column frames, super (as of 0.31) writes `net` values as an address plus
+* In column frames, super (as of 2.0) writes `net` values as an address plus
   a 1-byte prefix length (`netip.Prefix.AppendBinary`), not as the
   address-plus-mask body that the spec describes. The decoder accepts both.
 * The encoder writes row frames only, not column frames, and doesn't do

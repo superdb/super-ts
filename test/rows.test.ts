@@ -198,5 +198,13 @@ test("truncated input and bad magic", () => {
   assert.throws(() => decodeBSUP(new TextEncoder().encode("{a:1} not bsup")), /magic/)
   const bad = bytes.slice()
   bad[4] = 30 // version 0.30
+  bad[5] = 0
   assert.throws(() => decodeBSUP(bad), /version mismatch/)
+  const release = bytes.slice()
+  release[4] = 0 // version 1.0, as super v0.4.0 wrote
+  release[5] = 4
+  assert.throws(() => decodeBSUP(release), /version mismatch: expected 2.0, found 1.0/)
+  const minor = bytes.slice()
+  minor[4] = 1 // version 2.1, which a 2.0 decoder reads as super does
+  assert.doesNotThrow(() => decodeBSUP(minor))
 })

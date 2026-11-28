@@ -843,7 +843,7 @@ class LocatorParser {
 }
 
 // netFromPrefix converts a net value in a column frame to the body encoding
-// (address followed by mask).  The Go implementation (as of BSUP 0.31) writes
+// (address followed by mask).  The Go implementation (as of BSUP 2.0) writes
 // net vectors with netip.Prefix.AppendBinary, i.e., the address followed by
 // a 1-byte prefix length, rather than the body encoding given by the spec.
 function netFromPrefix(b: Uint8Array): Uint8Array {

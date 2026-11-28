@@ -61,7 +61,7 @@ export function concat(...arrs: Uint8Array[]): Uint8Array {
   return out
 }
 
-export const VERSION = (0 << 10) | 31
+export const VERSION = (2 << 10) | 0
 
 // The typedefs, type value, body, row frame, and super footer encoders are
 // the library's own.
