@@ -1,7 +1,7 @@
 {
   "name": "@superdb/super-ts",
   "version": "0.1.0",
-  "description": "TypeScript library for talking to SuperDB: super-structured types and values, a BSUP decoder, and clients for the SuperDB service and superdb wasm",
+  "description": "TypeScript library for talking to SuperDB: super-structured types and values, a BSUP decoder and encoder, clients for the SuperDB service and superdb wasm, and a Zod integration",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./zod": {
+      "types": "./dist/zod.d.ts",
+      "default": "./dist/zod.js"
     }
   },
   "files": [
@@ -24,10 +28,20 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --test 'test/**/*.test.ts'",
     "fixtures": "sh scripts/gen-fixtures.sh",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "example:zod": "node examples/zod-shapes/demo.ts"
+  },
+  "peerDependencies": {
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "zod": "^4.0.0"
   }
 }

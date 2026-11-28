@@ -7,6 +7,7 @@ It covers:
   that makes `===` a correct type-equality test,
 * **typed values**: one class per kind of value, with accessors suited to inspectors
   and table views,
+* a **BSUP encoder** that writes values as row frames, and a SUP writer,
 * a **BSUP decoder** for row frames, column frames (dict, const, LZ4, and the
   intcomp integer codecs), control frames, and super footers, which can stream
   input in chunks of any size or give random access to the values of a big
@@ -15,9 +16,13 @@ It covers:
 * a **SUP formatter** that matches the output of `super -f sup`, type decorators
   included,
 * **clients** for the SuperDB service (`super db serve`) and for superdb compiled
-  to wasm.
+  to wasm,
+* a **[Zod](https://zod.dev) integration** that carries TypeScript types into
+  SuperDB and back.
 
 It has no runtime dependencies and runs in browsers and in Node 22.18+.
+The Zod integration is a separate entry point, `@superdb/super-ts/zod`, so
+Zod is needed only if you import it.
 
 ## Quick start
 
@@ -89,6 +94,140 @@ tells you whether a type can contain fusion values.
 const d = new Defuser(results.context)
 d.defuse(results.get(i)).toString()   // the same SUP as `super -s`
 ```
+
+## TypeScript types in SuperDB, with Zod
+
+A TypeScript program's types are algebraic types, and so are SuperDB's.
+`@superdb/super-ts/zod` maps a Zod schema to a super type and converts the
+schema's values to and from SUP and BSUP. The values aren't flattened into
+JSON on the way: a discriminated union arrives in SuperDB as a union of
+named record types, is queried as one, and comes back as the same
+TypeScript values.
+
+```ts
+import * as z from "zod"
+import { superCodec } from "@superdb/super-ts/zod"
+
+const Shape = z
+  .discriminatedUnion("type", [
+    z.object({ id: z.int(), type: z.literal("Rectangle"), dimensions: z.object({ width: z.int(), height: z.int() }) }),
+    z.object({ id: z.int(), type: z.literal("Circle"), dimensions: z.object({ radius: z.int() }) }),
+    z.object({ id: z.int(), type: z.literal("Vector"), dimensions: z.array(z.int()) }),
+  ])
+  .meta({ id: "Shape" })
+type Shape = z.infer<typeof Shape>
+
+const codec = superCodec(Shape)
+codec.typeDecls()
+// type Circle={id:int64,type:string,dimensions:{radius:int64}}
+// type Rectangle={id:int64,type:string,dimensions:{width:int64,height:int64}}
+// type Vector={id:int64,type:string,dimensions:[int64]}
+// type Shape=Circle|Rectangle|Vector
+
+codec.toSUP(shapes)
+// {id:1,type:"Rectangle",dimensions:{width:2,height:1}}::Rectangle::Shape
+// {id:2,type:"Circle",dimensions:{radius:3}}::Circle::Shape
+// ...
+
+writeFileSync("shapes.bsup", codec.toBSUP(shapes))
+```
+
+In SuperDB the shapes have the program's types, and the query language's
+operators on those types read much as TypeScript's do:
+
+```sh
+$ super -s -c 'aggregate count() by kind:=nameof(under(this)) | sort kind' shapes.bsup
+{kind:"Circle",count:2}
+{kind:"Rectangle",count:1}
+{kind:"Vector",count:1}
+$ super -s -c 'values {id, radius: this.(Circle)?.dimensions?.radius ?? 0}' shapes.bsup
+{id:1,radius:0}
+{id:2,radius:3}
+...
+```
+
+The BSUP file carries its types, so a query can refer to `Circle` by name
+and super type checks the query against `Shape` before running it. Query
+results decode to values of the schema, which Zod checks, so they are typed
+in TypeScript as well:
+
+```ts
+const circles: Shape[] = codec.fromBSUP(bsupBytes)   // e.g., from `super -f bsup -c ...`
+
+const result = await db.query(`from shapes | where type=="Circle"`)
+for await (const v of result) codec.fromValue(v)     // from a client
+```
+
+`examples/zod-shapes` is this example in full, using the shapes of the
+SuperDB book. `npm run example:zod` runs it with the `super` on your `PATH`
+(or `$SUPER`).
+
+How schemas map to super types:
+
+| Zod | Super type |
+|---|---|
+| `z.object` | record, with an optional field (`name?:type`) for each `.optional()` property |
+| `z.discriminatedUnion`, `z.union` | union |
+| `z.enum`, a union of string literals | enum |
+| `z.literal` | the type of its value, e.g., string |
+| `z.string` and its formats | string |
+| `z.number` | float64 |
+| `z.int`, `z.int32`, `z.uint32`, `z.float32` | int64, int32, uint32, float32 |
+| `z.bigint`, `z.int64`, `z.uint64` | int64, int64, uint64 |
+| `z.boolean`, `z.date`, `z.null` | bool, timestamp, null |
+| `.optional()` | option |
+| `.nullable()` | union with null |
+| `z.array`, `z.set`, `z.map` | array, set, map |
+| `z.record` | map with string (or enum) keys |
+| `z.tuple` | record with fields named `"0"`, `"1"`, ... |
+| `.meta({ id: "Name" })` | named type `Name` |
+
+Things to know:
+
+* **Names.** A schema with `.meta({ id })` becomes a named type. The members
+  of a discriminated union that have no name of their own are named after
+  their discriminator values (turn this off with `nameVariants: false`).
+  Names matter for unions: SuperDB's type checker treats a named type as
+  a unit but fuses the unnamed records of a union into one record with
+  fields that may be missing. Recursive schemas must be named.
+* **Validation.** By default the codec parses values with the schema before
+  encoding (which applies defaults) and after decoding. `validate: false`
+  skips both.
+* **Decoding is by shape, not by exact type.** `fromValue` looks through
+  named types and unions, defuses fusion values, and ignores extra record
+  fields, so it accepts what a query returns as long as the schema's
+  fields are there.
+* **Unsupported.** `.transform()`, `z.custom`, `z.any`, `z.unknown`,
+  intersections, loose objects, and tuples with a rest element have no
+  type the codec can know (or no super counterpart) and are rejected when
+  the codec is made. `.default()`, `.readonly()`, `.catch()`, `.brand()`,
+  `z.lazy`, `z.preprocess`, and refinements are fine.
+* A `Date` has millisecond precision, so a timestamp finer than that is
+  truncated on the way back. An integer too big for a `number` schema is an
+  error, not a silent rounding: use `z.int64()`.
+* The codec is built on `zod/v4/core`, which the schemas of `zod` 4 (and
+  `zod/v4` in Zod 3.25) and `zod/mini` share.
+
+## Encoding
+
+`encodeBSUP(values)` writes values as BSUP row frames with a super footer,
+and `formatSUP(values)` writes them as SUP text with a `type` declaration
+ahead of the first use of each named type. Both are tested by sending
+their output through `super` and getting the same values back.
+
+```ts
+import { encodeBSUP, formatSUP } from "@superdb/super-ts"
+
+writeFileSync("values.bsup", encodeBSUP(values))
+```
+
+The super footer of a BSUP file holds the fused type of its values, which
+SuperDB's type checker uses to check queries on the file. The encoder
+knows it when the values all have one type that fusion leaves alone (see
+`isFusedType`), as a codec's do when its unions are of named types.
+Otherwise it leaves the fused type out, since computing it takes SuperDB's
+type fusion, and super checks queries on the file as they run. Pass
+`fusedType` if you know it.
 
 ## Types
 
@@ -259,6 +398,11 @@ The tests check the decoder against three kinds of fixtures:
 * Hand-built row and column frames (`test/helpers/encode.ts`) for cases that
   are easier to construct directly.
 
+The encoder is tested by decoding the reference BSUP, encoding it again,
+and requiring super's SUP once more. `test/zod-super.test.ts` sends the Zod
+codec's BSUP and SUP through the `super` command and back; it's skipped
+when `super` (or `$SUPER`) isn't there to run.
+
 ## Notes and known gaps
 
 * The decoder reads BSUP version 0.31 only, and it rejects other 0.x versions
@@ -272,4 +416,5 @@ The tests check the decoder against three kinds of fixtures:
 * In column frames, super (as of 0.31) writes `net` values as an address plus
   a 1-byte prefix length (`netip.Prefix.AppendBinary`), not as the
   address-plus-mask body that the spec describes. The decoder accepts both.
-* There's no encoder yet. Send text formats (SUP or JSON) to SuperDB as input.
+* The encoder writes row frames only, not column frames, and doesn't do
+  type fusion (see [Encoding](#encoding)).
